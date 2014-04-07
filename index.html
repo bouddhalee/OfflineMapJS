@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<!-- saved from url=(0112)https://mdn.mozillademos.org/en-US/docs/IndexedDB/Using_IndexedDB$samples/Full_IndexedDB_example?revision=536717 -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <link rel="stylesheet" href="http://cdn.leafletjs.com/leaflet-0.7.2/leaflet.css" />
+    <style>
+        #map { height: 720px; }
+    </style>
+    <script>
+        /*CM_ATTR = 'Map data &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors, ' +
+                '<a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, ' +
+                'Imagery © <a href="http://cloudmade.com">CloudMade</a>';
+
+        CM_URL = 'http://{s}.tile.cloudmade.com/d4fc77ea4a63471cab2423e66626cbb6/{styleId}/256/{z}/{x}/{y}.png';
+
+        OSM_URL = 'http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+        OSM_ATTRIB = '&copy; <a href="http://openstreetmap.org/copyright">OpenStreetMap</a> contributors';*/
+
+        //mapquestUrl = 'map.html?z={z}&x={x}&y={y}'
+        mapquestUrl = 'http://{s}.mqcdn.com/tiles/1.0.0/osm/{z}/{x}/{y}.png'
+        subDomains = ['otile1','otile2','otile3','otile4']
+        mapquestAttrib = 'Data, imagery and map information provided by <a href="http://open.mapquest.co.uk" target="_blank">MapQuest</a>, <a href="http://www.openstreetmap.org/" target="_blank">OpenStreetMap</a> and contributors.'
+    </script>
+</head>
+<body>
+    <div id="map"></div>
+
+    <script src="http://cdn.leafletjs.com/leaflet-0.7.2/leaflet.js"></script>
+    <script>
+        MyLayer = L.TileLayer.extend({
+            getTileUrl: function (tilePoint) {
+                console.log(tilePoint.x + ", " + tilePoint.y + ", " + tilePoint.z);
+                return L.Util.template(this._url, L.extend({
+                    s: this._getSubdomain(tilePoint),
+                    z: tilePoint.z,
+                    x: tilePoint.x,
+                    y: tilePoint.y
+                }, this.options));
+            }
+        });
+
+
+        var map = L.map('map').setView([51.505, -0.09], 13);
+
+        //L.tileLayer(CM_URL, {attribution: CM_ATTR, styleId: 997}).addTo(map);
+        var myLayer = new MyLayer(mapquestUrl, {maxZoom: 18, attribution: mapquestAttrib, subdomains: subDomains});
+        myLayer.addTo(map);
+    </script>
+</body>
+</html>
