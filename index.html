@@ -5,17 +5,11 @@
     <style>
         #map { height: 720px; }
     </style>
+    <script type="text/javascript" src="./IndexedDBShim.min.js"></script>
+    <script type="text/javascript" src="./idbstore.min.js"></script>
     <script>
-        /*CM_ATTR = 'Map data &copy; <a href="http://openstreetmap.org">OpenStreetMap</a> contributors, ' +
-                '<a href="http://creativecommons.org/licenses/by-sa/2.0/">CC-BY-SA</a>, ' +
-                'Imagery © <a href="http://cloudmade.com">CloudMade</a>';
+        CM_URL = 'http://{s}.tile.cloudmade.com/d4fc77ea4a63471cab2423e66626cbb6/997/256/{z}/{x}/{y}.png';
 
-        CM_URL = 'http://{s}.tile.cloudmade.com/d4fc77ea4a63471cab2423e66626cbb6/{styleId}/256/{z}/{x}/{y}.png';
-
-        OSM_URL = 'http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-        OSM_ATTRIB = '&copy; <a href="http://openstreetmap.org/copyright">OpenStreetMap</a> contributors';*/
-
-        //mapquestUrl = 'map.html?z={z}&x={x}&y={y}'
         mapquestUrl = 'http://{s}.mqcdn.com/tiles/1.0.0/osm/{z}/{x}/{y}.png'
         subDomains = ['otile1','otile2','otile3','otile4']
         mapquestAttrib = 'Data, imagery and map information provided by <a href="http://open.mapquest.co.uk" target="_blank">MapQuest</a>, <a href="http://www.openstreetmap.org/" target="_blank">OpenStreetMap</a> and contributors.'
@@ -26,24 +20,118 @@
 
     <script src="http://cdn.leafletjs.com/leaflet-0.7.2/leaflet.js"></script>
     <script>
+        console.log("Testing");
+        var images;
+
+        images = new IDBStore({
+            dbVersion: 4,
+            storeName: 'image',
+            keyPath: 'id',
+            autoIncrement: true,
+            onStoreReady: function(){
+                storeReady();
+            },
+            indexes: [
+                { name: 'index' }
+            ]
+        });
+
         MyLayer = L.TileLayer.extend({
             getTileUrl: function (tilePoint) {
-                console.log(tilePoint.x + ", " + tilePoint.y + ", " + tilePoint.z);
                 return L.Util.template(this._url, L.extend({
                     s: this._getSubdomain(tilePoint),
                     z: tilePoint.z,
                     x: tilePoint.x,
                     y: tilePoint.y
                 }, this.options));
+            },
+
+            _imageToDataUri: function (image) {
+                var canvas = window.document.createElement('canvas');
+                canvas.width = image.naturalWidth || image.width;
+                canvas.height = image.naturalHeight || image.height;
+
+                var context = canvas.getContext('2d');
+                context.drawImage(image, 0, 0);
+
+                return canvas.toDataURL('image/png');
+            },
+
+            _tileOnLoadWithCache: function () {
+                var newData = {
+                    "index": this._storageKey,
+                    "image": this._layer._imageToDataUri(this)
+                };
+                images.put(newData);
+                L.TileLayer.prototype._tileOnLoad.apply(this, arguments);
+            },
+
+            _setUpTile: function (tile, key, value, cache) {
+                if (cache) {
+                    tile._storageKey = key;
+                    tile.onload = this._tileOnLoadWithCache;
+                    tile.crossOrigin = 'Anonymous';
+                } else {
+                    tile.onload = this._tileOnLoad;
+                }
+                tile.src = value;
+                this.fire('tileloadstart', {
+                    tile: tile,
+                    url: tile.src
+                });
+            },
+
+            _loadTile: function (tile, tilePoint) {
+                tile._layer = this;
+                tile.onerror = this._tileOnError;
+                this._adjustTilePoint(tilePoint);
+                var key = tilePoint.x + ", " + tilePoint.y + ", " + tilePoint.z;
+
+                var myKeyRange = images.makeKeyRange({
+                    only: key
+                });
+
+                var self = this;
+
+                var onItem = function(items){
+                    if(items.length > 0){
+                        if(items.length > 1){
+                            console.log("duplicates...")
+                        }
+                        else{
+                            console.log("found");
+                            self._setUpTile(tile, key, items[0].image, false);
+                        }
+                    }
+                    else{
+                        console.log("not found");
+                        self._setUpTile(tile, key, self.getTileUrl(tilePoint), true);
+                    }
+                }
+
+                var onError = function() {
+                    console.log("error");
+                    this._setUpTile(tile, key, this.getTileUrl(tilePoint), true);
+                }
+
+                images.query(onItem,
+                    {
+                        index: 'index',
+                        keyRange: myKeyRange,
+                        filterDuplicates: false,
+                        onError: onError
+                });
             }
         });
 
+        function storeReady(){
+            console.log("store is ready");
+            var map = L.map('map').setView([51.505, -0.09], 13);
 
-        var map = L.map('map').setView([51.505, -0.09], 13);
-
-        //L.tileLayer(CM_URL, {attribution: CM_ATTR, styleId: 997}).addTo(map);
-        var myLayer = new MyLayer(mapquestUrl, {maxZoom: 18, attribution: mapquestAttrib, subdomains: subDomains});
-        myLayer.addTo(map);
+            //L.tileLayer(CM_URL, {attribution: CM_ATTR, styleId: 997}).addTo(map);
+            var myLayer = new MyLayer(mapquestUrl, {maxZoom: 18, attribution: mapquestAttrib, subdomains: subDomains});
+            myLayer.addTo(map);
+        }
     </script>
 </body>
 </html>
