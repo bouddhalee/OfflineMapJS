@@ -20,11 +20,23 @@
 
     <script src="http://cdn.leafletjs.com/leaflet-0.7.2/leaflet.js"></script>
     <script>
-        console.log("Testing");
+        var ajax = function (src, responseType, callback) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', src, true);
+            xhr.responseType = responseType || 'text';
+            xhr.onload = function(err) {
+                if (this.status == 200) {
+                    callback(this.response);
+                }
+            };
+            xhr.send();
+        };
+
+        var maxNbCachedZoomLevels = 5;
         var images;
 
         images = new IDBStore({
-            dbVersion: 4,
+            dbVersion: 6,
             storeName: 'image',
             keyPath: 'id',
             autoIncrement: true,
@@ -32,20 +44,11 @@
                 storeReady();
             },
             indexes: [
-                { name: 'index' }
+                { name: 'index', unique: true }
             ]
         });
 
         MyLayer = L.TileLayer.extend({
-            getTileUrl: function (tilePoint) {
-                return L.Util.template(this._url, L.extend({
-                    s: this._getSubdomain(tilePoint),
-                    z: tilePoint.z,
-                    x: tilePoint.x,
-                    y: tilePoint.y
-                }, this.options));
-            },
-
             _imageToDataUri: function (image) {
                 var canvas = window.document.createElement('canvas');
                 canvas.width = image.naturalWidth || image.width;
@@ -105,13 +108,15 @@
                     }
                     else{
                         console.log("not found");
-                        self._setUpTile(tile, key, self.getTileUrl(tilePoint), true);
+                        //self._setUpTile(tile, key, self.getTileUrl(tilePoint), true);
+                        self._setUpTile(tile, key, self.getTileUrl(tilePoint), false);
                     }
                 }
 
                 var onError = function() {
                     console.log("error");
-                    this._setUpTile(tile, key, this.getTileUrl(tilePoint), true);
+                    //this._setUpTile(tile, key, this.getTileUrl(tilePoint), true);
+                    this._setUpTile(tile, key, this.getTileUrl(tilePoint), false);
                 }
 
                 images.query(onItem,
@@ -124,14 +129,89 @@
             }
         });
 
-        function storeReady(){
-            console.log("store is ready");
-            var map = L.map('map').setView([51.505, -0.09], 13);
+        var myLayer = new MyLayer(mapquestUrl, {maxZoom: 18, attribution: mapquestAttrib, subdomains: subDomains});
+        var map;
 
-            //L.tileLayer(CM_URL, {attribution: CM_ATTR, styleId: 997}).addTo(map);
-            var myLayer = new MyLayer(mapquestUrl, {maxZoom: 18, attribution: mapquestAttrib, subdomains: subDomains});
+        function storeReady(){
+            map = L.map('map').setView([51.505, -0.09], 13);
+
             myLayer.addTo(map);
+            map.addControl(new MyControl());
         }
+
+        var MyControl = L.Control.extend({
+            options: {
+                position: 'topright'
+            },
+
+            onAdd: function (map) {
+                var newButton = L.DomUtil.create('div', 'leaflet-buttons-control-button', this._container);
+
+                var image = L.DomUtil.create('img', 'leaflet-buttons-control-img', newButton);
+                image.setAttribute('src', "cacheBtn.png");
+
+                L.DomEvent.addListener(newButton, 'click', this.onClick, this);
+                L.DomEvent.disableClickPropagation(newButton);
+                return newButton;
+            },
+
+            onClick: function (){
+                var startingZoom = myLayer._getZoomForUrl();
+                var maxZoom = map.getMaxZoom();
+                console.log("actualZoom: " + startingZoom);
+
+                var nbZoomLevelsToCache = maxZoom - startingZoom;
+                if(nbZoomLevelsToCache > maxNbCachedZoomLevels){
+                    alert("Not possible to save more than " + maxNbCachedZoomLevels + " zoom levels.")
+                }
+
+                for(var tile in myLayer._tiles){
+                    var split = tile.split(":");
+                    var x = parseInt(split[0]);
+                    var y = parseInt(split[1]);
+                    this.split(x, y, startingZoom, maxZoom);
+                }
+            },
+
+            split: function(x, y, currentZ, finalZ){
+                this.getImage(x, y, currentZ);
+
+                if(currentZ < finalZ){
+                    this.split(x * 2, y * 2, currentZ + 1, finalZ);
+                    this.split(x * 2 + 1, y * 2, currentZ + 1, finalZ);
+                    this.split(x * 2, y * 2 + 1, currentZ + 1, finalZ);
+                    this.split(x * 2 + 1, y * 2 + 1, currentZ + 1, finalZ);
+                }
+            },
+
+            getImage: function(x, y, currentZ){
+                var index = Math.abs(x + y) % myLayer.options.subdomains.length;
+                var subdomain = myLayer.options.subdomains[index];
+                var url = L.Util.template(mapquestUrl, L.extend({
+                    s: subdomain,
+                    z: currentZ,
+                    x: x,
+                    y: y
+                }, myLayer.options));
+
+                var key = x + ", " + y + ", " + currentZ;
+                ajax(url, 'arraybuffer', function (response) {
+                    images.put({"index": key, "image": arrayBufferToBase64ImagePNG(response)});
+                    console.log("added image with key: " + key);
+                });
+            }
+        });
+
+        function arrayBufferToBase64ImagePNG(buffer) {
+            var binary = '';
+            var bytes = new Uint8Array(buffer);
+            for (var i = 0, l = bytes.byteLength; i < l; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return 'data:image/png;base64,' + btoa(binary);
+        }
+
+
     </script>
 </body>
 </html>
