@@ -1,10 +1,11 @@
 <!DOCTYPE html>
 <html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-    <link rel="stylesheet" href="http://cdn.leafletjs.com/leaflet-0.7.2/leaflet.css" />
+    <link rel="stylesheet" href="./leaflet.css" />
     <style>
         #map { height: 720px; }
     </style>
     <!-- https://www.npmjs.org/package/queue-async -->
+    <script type="text/javascript" src="./leaflet.js"></script>
     <script type="text/javascript" src="./queue.v1.min.js"></script>
     <script type="text/javascript" src="./IndexedDBShim.min.js"></script>
     <script type="text/javascript" src="./idbstore.min.js"></script>
@@ -16,11 +17,14 @@
 </head>
 <body>
     <div id="map"></div>
-
-    <script src="http://cdn.leafletjs.com/leaflet-0.7.2/leaflet.js"></script>
     <script>
         // TAKEN FROM OfflineMap
-        var ajax = function (src, responseType, callback) {
+        var ajax = function (src, responseType, callback, error, queueCallback) {
+            if(hasBeenCanceled){
+                queueCallback();
+                return;
+            }
+
             var xhr = new XMLHttpRequest();
             xhr.open('GET', src, true);
             xhr.responseType = responseType || 'text';
@@ -28,6 +32,10 @@
                 if (this.status == 200) {
                     callback(this.response);
                 }
+                else{
+                    error();
+                }
+                queueCallback();
             };
             xhr.send();
         };
@@ -35,6 +43,7 @@
         var maxNbCachedZoomLevels = 5;
         var cacheLoadedImages = false;
         var nbImagesLeftToSave = 0;
+        var nbImagesWithError = 0;
 
         var images = new IDBStore({
             dbVersion: 8,
@@ -110,38 +119,55 @@
 
         var myLayer = new MyLayer(mapquestUrl, {maxZoom: 18, attribution: mapquestAttrib, subdomains: subDomains});
         var map;
-        var button;
+        var controls;
 
         function storeReady(){
+            //images.deleteDatabase();
             map = L.map('map').setView([-2.9, -79], 13);
 
             myLayer.addTo(map);
 
-            button = new MyControl();
-            map.addControl(button);
+            controls = new MyControl();
+            map.addControl(controls);
         }
 
+        var hasBeenCanceled = false;
         var MyControl = L.Control.extend({
             options: {
                 position: 'topright'
             },
 
             onAdd: function (map) {
-                var newButton = L.DomUtil.create('div', 'leaflet-buttons-control-button', this._container);
+                var controls = L.DomUtil.create('div', 'leaflet-buttons-control-button', this._container);
 
-                var image = L.DomUtil.create('img', 'leaflet-buttons-control-img', newButton);
-                image.setAttribute('src', "cacheBtn.png");
+                var cacheButton = L.DomUtil.create('img', 'cache-button', controls);
+                cacheButton.setAttribute('src', "cacheBtn.png");
 
-                this._counter = L.DomUtil.create('div', 'counter', newButton);
-                this._counter.innerHTML = "12";
+                this._counter = L.DomUtil.create('div', 'counter', controls);
+                this._counter.innerHTML = "0";
 
-                L.DomEvent.addListener(newButton, 'click', this.onClick, this);
-                L.DomEvent.disableClickPropagation(newButton);
-                return newButton;
+                this._errorCounter = L.DomUtil.create('div', 'error-counter', controls);
+                this._errorCounter.innerHTML = "0";
+
+                var cancelButton = L.DomUtil.create('img', 'cancel-button', controls);
+                cancelButton.setAttribute('src', "cancelBtn.png");
+
+                L.DomEvent.addListener(cacheButton, 'click', this.onCacheClick, this);
+                L.DomEvent.disableClickPropagation(cacheButton);
+
+                L.DomEvent.addListener(cancelButton, 'click', this.onCancelClick, this);
+                L.DomEvent.disableClickPropagation(cancelButton);
+
+                return controls;
             },
 
-            onClick: function (){
+            onCacheClick: function (){
+                hasBeenCanceled = false;
                 saveImages();
+            },
+
+            onCancelClick: function (){
+                hasBeenCanceled = true;
             }
         });
 
@@ -163,9 +189,14 @@
             return x + ", " + y + ", " + z;
         }
 
+        var myQueue;
+        var imagesToQuery;
+        var imagesToQueryArray;
+
         function saveImages(){
             var startingZoom = myLayer._getZoomForUrl();
             var maxZoom = map.getMaxZoom();
+            var minZoom = 2;
             console.log("actualZoom: " + startingZoom);
 
             var nbZoomLevelsToCache = maxZoom - startingZoom;
@@ -173,48 +204,99 @@
                 alert("Not possible to save more than " + maxNbCachedZoomLevels + " zoom levels.")
             }
 
+            if(myQueue){
+                alert("system is busy.")
+                return;
+            }
+
+            imagesToQuery = {};
+
             for(var tile in myLayer._tiles){
                 var split = tile.split(":");
                 var x = parseInt(split[0]);
                 var y = parseInt(split[1]);
-                getImages(x, y, startingZoom, maxZoom);
+                getZoomedInImages(x, y, startingZoom, maxZoom);
+                getZoomedOutImages(Math.floor(x/2), Math.floor(y/2), startingZoom - 1, minZoom);
+            }
+
+            imagesToQueryArray = [];
+            for(var key in imagesToQuery){
+                imagesToQueryArray.push(key);
+            }
+
+            images.getBatch(imagesToQueryArray, startLoadingImages, onImageError, 'dense');
+        }
+
+        function startLoadingImages(items){
+            myQueue = queue(8);
+            var i = 0;
+            items.forEach(function (item){
+                if(item){
+                    // image already exist
+                }
+                else{
+                    var key = imagesToQueryArray[i];
+                    var data = imagesToQuery[key];
+
+                    nbImagesLeftToSave++;
+                    controls._counter.innerHTML = nbImagesLeftToSave;
+
+                    console.log("will defer for key " + key);
+                    myQueue.defer(ajax, createURL(data.x, data.y, data.z), 'arraybuffer', function (response) {
+                                images.put(key, {"image": arrayBufferToBase64ImagePNG(response)});
+                                console.log("added image with key: " + key);
+                                nbImagesLeftToSave--;
+                                controls._counter.innerHTML = nbImagesLeftToSave;
+                            },
+                            function (){
+                                nbImagesWithError++;
+                                controls._errorCounter.innerHTML = nbImagesWithError;
+                                nbImagesLeftToSave--;
+                                controls._counter.innerHTML = nbImagesLeftToSave;
+                            });
+                }
+
+                i++;
+            });
+
+            console.log("will wait for all");
+            myQueue.awaitAll(function(error, data) {
+                myQueue = null;
+                console.log("done waiting");
+                nbImagesLeftToSave = 0;
+                controls._counter.innerHTML = nbImagesLeftToSave;
+            });
+        }
+
+        function getZoomedInImages(x, y, currentZ, maxZ){
+            getImage(x, y, currentZ);
+
+            if(currentZ < maxZ){
+                getZoomedInImages(x * 2, y * 2, currentZ + 1, maxZ);
+                getZoomedInImages(x * 2 + 1, y * 2, currentZ + 1, maxZ);
+                getZoomedInImages(x * 2, y * 2 + 1, currentZ + 1, maxZ);
+                getZoomedInImages(x * 2 + 1, y * 2 + 1, currentZ + 1, maxZ);
             }
         }
 
-        function getImages(x, y, currentZ, finalZ){
+        function getZoomedOutImages(x, y, currentZ, finalZ){
             getImage(x, y, currentZ);
-
-            if(currentZ < finalZ){
-                getImages(x * 2, y * 2, currentZ + 1, finalZ);
-                getImages(x * 2 + 1, y * 2, currentZ + 1, finalZ);
-                getImages(x * 2, y * 2 + 1, currentZ + 1, finalZ);
-                getImages(x * 2 + 1, y * 2 + 1, currentZ + 1, finalZ);
+            if(currentZ > finalZ){
+                //console.log("zoomed out image: " + x + ", " + y + ", " + currentZ)
+                getZoomedOutImages(Math.floor(x / 2), Math.floor(y / 2), currentZ - 1, finalZ);
             }
         }
 
         function getImage(x, y, z){
-            onSuccess = function(item){
-                if(item){
-                    // image already saved
-                }
-                else{
-                    nbImagesLeftToSave++;
-                    button._counter.innerHTML = nbImagesLeftToSave;
-                    ajax(createURL(x, y, z), 'arraybuffer', function (response) {
-                        images.put(key, {"image": arrayBufferToBase64ImagePNG(response)});
-                        console.log("added image with key: " + key);
-                        nbImagesLeftToSave--;
-                        button._counter.innerHTML = nbImagesLeftToSave;
-                    });
-                }
-            }
-
-            onError = function(){
-                // What should be done?
-            }
-
             var key = createKey(x, y, z);
-            images.get(key, onSuccess, onError);
+            if(!imagesToQuery[key]){
+                imagesToQuery[key] = {key:key, x: x, y: y, z: z};
+            }
+        }
+
+        function onImageError(){
+            // What should be done?
+            console.log("Image error");
         }
 
         function createURL(x, y, z){
