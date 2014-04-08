@@ -1,15 +1,14 @@
 <!DOCTYPE html>
-<!-- saved from url=(0112)https://mdn.mozillademos.org/en-US/docs/IndexedDB/Using_IndexedDB$samples/Full_IndexedDB_example?revision=536717 -->
 <html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
     <link rel="stylesheet" href="http://cdn.leafletjs.com/leaflet-0.7.2/leaflet.css" />
     <style>
         #map { height: 720px; }
     </style>
+    <!-- https://www.npmjs.org/package/queue-async -->
+    <script type="text/javascript" src="./queue.v1.min.js"></script>
     <script type="text/javascript" src="./IndexedDBShim.min.js"></script>
     <script type="text/javascript" src="./idbstore.min.js"></script>
     <script>
-        CM_URL = 'http://{s}.tile.cloudmade.com/d4fc77ea4a63471cab2423e66626cbb6/997/256/{z}/{x}/{y}.png';
-
         mapquestUrl = 'http://{s}.mqcdn.com/tiles/1.0.0/osm/{z}/{x}/{y}.png'
         subDomains = ['otile1','otile2','otile3','otile4']
         mapquestAttrib = 'Data, imagery and map information provided by <a href="http://open.mapquest.co.uk" target="_blank">MapQuest</a>, <a href="http://www.openstreetmap.org/" target="_blank">OpenStreetMap</a> and contributors.'
@@ -20,6 +19,7 @@
 
     <script src="http://cdn.leafletjs.com/leaflet-0.7.2/leaflet.js"></script>
     <script>
+        // TAKEN FROM OfflineMap
         var ajax = function (src, responseType, callback) {
             var xhr = new XMLHttpRequest();
             xhr.open('GET', src, true);
@@ -33,22 +33,21 @@
         };
 
         var maxNbCachedZoomLevels = 5;
-        var images;
+        var cacheLoadedImages = false;
+        var nbImagesLeftToSave = 0;
 
-        images = new IDBStore({
-            dbVersion: 6,
+        var images = new IDBStore({
+            dbVersion: 8,
             storeName: 'image',
-            keyPath: 'id',
-            autoIncrement: true,
+            keyPath: null,
+            autoIncrement: false,
             onStoreReady: function(){
                 storeReady();
-            },
-            indexes: [
-                { name: 'index', unique: true }
-            ]
+            }
         });
 
         MyLayer = L.TileLayer.extend({
+            // TAKEN FROM OfflineMap
             _imageToDataUri: function (image) {
                 var canvas = window.document.createElement('canvas');
                 canvas.width = image.naturalWidth || image.width;
@@ -60,15 +59,13 @@
                 return canvas.toDataURL('image/png');
             },
 
+            // TAKEN FROM OfflineMap
             _tileOnLoadWithCache: function () {
-                var newData = {
-                    "index": this._storageKey,
-                    "image": this._layer._imageToDataUri(this)
-                };
-                images.put(newData);
+                images.put(this._storageKey, {"image": this._layer._imageToDataUri(this)});
                 L.TileLayer.prototype._tileOnLoad.apply(this, arguments);
             },
 
+            // TAKEN FROM OfflineMap
             _setUpTile: function (tile, key, value, cache) {
                 if (cache) {
                     tile._storageKey = key;
@@ -88,55 +85,40 @@
                 tile._layer = this;
                 tile.onerror = this._tileOnError;
                 this._adjustTilePoint(tilePoint);
-                var key = tilePoint.x + ", " + tilePoint.y + ", " + tilePoint.z;
-
-                var myKeyRange = images.makeKeyRange({
-                    only: key
-                });
 
                 var self = this;
-
-                var onItem = function(items){
-                    if(items.length > 0){
-                        if(items.length > 1){
-                            console.log("duplicates...")
-                        }
-                        else{
-                            console.log("found");
-                            self._setUpTile(tile, key, items[0].image, false);
-                        }
+                var onSuccess = function(item){
+                    if(item){
+                        console.log("found");
+                        self._setUpTile(tile, key, item.image, false);
                     }
                     else{
                         console.log("not found");
-                        //self._setUpTile(tile, key, self.getTileUrl(tilePoint), true);
-                        self._setUpTile(tile, key, self.getTileUrl(tilePoint), false);
+                        self._setUpTile(tile, key, self.getTileUrl(tilePoint), cacheLoadedImages);
                     }
                 }
 
                 var onError = function() {
                     console.log("error");
-                    //this._setUpTile(tile, key, this.getTileUrl(tilePoint), true);
-                    this._setUpTile(tile, key, this.getTileUrl(tilePoint), false);
+                    this._setUpTile(tile, key, this.getTileUrl(tilePoint), cacheLoadedImages);
                 }
 
-                images.query(onItem,
-                    {
-                        index: 'index',
-                        keyRange: myKeyRange,
-                        filterDuplicates: false,
-                        onError: onError
-                });
+                var key = tilePoint.x + ", " + tilePoint.y + ", " + tilePoint.z;
+                images.get(key, onSuccess, onError);
             }
         });
 
         var myLayer = new MyLayer(mapquestUrl, {maxZoom: 18, attribution: mapquestAttrib, subdomains: subDomains});
         var map;
+        var button;
 
         function storeReady(){
-            map = L.map('map').setView([51.505, -0.09], 13);
+            map = L.map('map').setView([-2.9, -79], 13);
 
             myLayer.addTo(map);
-            map.addControl(new MyControl());
+
+            button = new MyControl();
+            map.addControl(button);
         }
 
         var MyControl = L.Control.extend({
@@ -150,58 +132,24 @@
                 var image = L.DomUtil.create('img', 'leaflet-buttons-control-img', newButton);
                 image.setAttribute('src', "cacheBtn.png");
 
+                this._counter = L.DomUtil.create('div', 'counter', newButton);
+                this._counter.innerHTML = "12";
+
                 L.DomEvent.addListener(newButton, 'click', this.onClick, this);
                 L.DomEvent.disableClickPropagation(newButton);
                 return newButton;
             },
 
             onClick: function (){
-                var startingZoom = myLayer._getZoomForUrl();
-                var maxZoom = map.getMaxZoom();
-                console.log("actualZoom: " + startingZoom);
-
-                var nbZoomLevelsToCache = maxZoom - startingZoom;
-                if(nbZoomLevelsToCache > maxNbCachedZoomLevels){
-                    alert("Not possible to save more than " + maxNbCachedZoomLevels + " zoom levels.")
-                }
-
-                for(var tile in myLayer._tiles){
-                    var split = tile.split(":");
-                    var x = parseInt(split[0]);
-                    var y = parseInt(split[1]);
-                    this.split(x, y, startingZoom, maxZoom);
-                }
-            },
-
-            split: function(x, y, currentZ, finalZ){
-                this.getImage(x, y, currentZ);
-
-                if(currentZ < finalZ){
-                    this.split(x * 2, y * 2, currentZ + 1, finalZ);
-                    this.split(x * 2 + 1, y * 2, currentZ + 1, finalZ);
-                    this.split(x * 2, y * 2 + 1, currentZ + 1, finalZ);
-                    this.split(x * 2 + 1, y * 2 + 1, currentZ + 1, finalZ);
-                }
-            },
-
-            getImage: function(x, y, currentZ){
-                var index = Math.abs(x + y) % myLayer.options.subdomains.length;
-                var subdomain = myLayer.options.subdomains[index];
-                var url = L.Util.template(mapquestUrl, L.extend({
-                    s: subdomain,
-                    z: currentZ,
-                    x: x,
-                    y: y
-                }, myLayer.options));
-
-                var key = x + ", " + y + ", " + currentZ;
-                ajax(url, 'arraybuffer', function (response) {
-                    images.put({"index": key, "image": arrayBufferToBase64ImagePNG(response)});
-                    console.log("added image with key: " + key);
-                });
+                saveImages();
             }
         });
 
+        // TAKEN FROM OfflineMap
+        /*
+         Probably btoa can work incorrect, you can override btoa with next example:
+         https://developer.mozilla.org/en-US/docs/Web/JavaScript/Base64_encoding_and_decoding#Solution_.232_.E2.80.93_rewriting_atob%28%29_and_btoa%28%29_using_TypedArrays_and_UTF-8
+         */
         function arrayBufferToBase64ImagePNG(buffer) {
             var binary = '';
             var bytes = new Uint8Array(buffer);
@@ -211,7 +159,75 @@
             return 'data:image/png;base64,' + btoa(binary);
         }
 
+        function createKey(x, y, z){
+            return x + ", " + y + ", " + z;
+        }
 
+        function saveImages(){
+            var startingZoom = myLayer._getZoomForUrl();
+            var maxZoom = map.getMaxZoom();
+            console.log("actualZoom: " + startingZoom);
+
+            var nbZoomLevelsToCache = maxZoom - startingZoom;
+            if(nbZoomLevelsToCache > maxNbCachedZoomLevels){
+                alert("Not possible to save more than " + maxNbCachedZoomLevels + " zoom levels.")
+            }
+
+            for(var tile in myLayer._tiles){
+                var split = tile.split(":");
+                var x = parseInt(split[0]);
+                var y = parseInt(split[1]);
+                getImages(x, y, startingZoom, maxZoom);
+            }
+        }
+
+        function getImages(x, y, currentZ, finalZ){
+            getImage(x, y, currentZ);
+
+            if(currentZ < finalZ){
+                getImages(x * 2, y * 2, currentZ + 1, finalZ);
+                getImages(x * 2 + 1, y * 2, currentZ + 1, finalZ);
+                getImages(x * 2, y * 2 + 1, currentZ + 1, finalZ);
+                getImages(x * 2 + 1, y * 2 + 1, currentZ + 1, finalZ);
+            }
+        }
+
+        function getImage(x, y, z){
+            onSuccess = function(item){
+                if(item){
+                    // image already saved
+                }
+                else{
+                    nbImagesLeftToSave++;
+                    button._counter.innerHTML = nbImagesLeftToSave;
+                    ajax(createURL(x, y, z), 'arraybuffer', function (response) {
+                        images.put(key, {"image": arrayBufferToBase64ImagePNG(response)});
+                        console.log("added image with key: " + key);
+                        nbImagesLeftToSave--;
+                        button._counter.innerHTML = nbImagesLeftToSave;
+                    });
+                }
+            }
+
+            onError = function(){
+                // What should be done?
+            }
+
+            var key = createKey(x, y, z);
+            images.get(key, onSuccess, onError);
+        }
+
+        function createURL(x, y, z){
+            var subdomainIndex = Math.abs(x + y) % myLayer.options.subdomains.length;
+            var subdomain = myLayer.options.subdomains[subdomainIndex];
+            return L.Util.template(mapquestUrl,
+                    L.extend({
+                        s: subdomain,
+                        z: z,
+                        x: x,
+                        y: y
+                    }, myLayer.options));
+        }
     </script>
 </body>
 </html>
