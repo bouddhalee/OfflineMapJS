@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-    <link rel="stylesheet" href="./leaflet.css" />
     <style>
         #map { height: 720px; }
     </style>
-    <!-- https://www.npmjs.org/package/queue-async -->
+
+    <link rel="stylesheet" href="./leaflet.css" />
     <script type="text/javascript" src="./leaflet.js"></script>
     <script type="text/javascript" src="./IndexedDBShim.min.js"></script>
     <script type="text/javascript" src="./index.js"></script>
@@ -17,6 +17,7 @@
 <body>
     <div id="map"></div>
     <script>
+        /* An example of control that can be used for saving tiles */
         var CacheBtnControl = L.Control.extend({
             options: {
                 position: 'topright'
@@ -37,6 +38,10 @@
             },
 
             onCacheClick: function (){
+                // Might be a good idea to put a limit on the number of tiles that can would be saved
+                // calculateNbTiles includes potentially already saved tiles.
+                console.log("Will be saving: " + offlineLayer.calculateNbTiles() + " tiles");
+                // the actual call to save the tiles
                 offlineLayer.saveTiles();
             }
         });
@@ -52,8 +57,11 @@
         var onError = function(){
             // do something
         }
-        var offlineLayer = new OfflineLayer( mapquestUrl, {maxZoom: 18, attribution: mapquestAttrib, subdomains: subDomains,
-                                             onReady: onReady, /*optional*/onError: onError, /*optional*/storeName:"myStoreName"});
+        var offlineLayer = new OfflineLayer( mapquestUrl, { /*leaflet TileLayer basic options: */ maxZoom: 18,
+                                             attribution: mapquestAttrib, subdomains: subDomains,
+                                            /*OfflineLayer specific options: */
+                                            onReady: onReady, /*optional*/onError: onError,
+                                            /*optional*/storeName:"myStoreName"});
     </script>
 </body>
 </html>

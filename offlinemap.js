@@ -76,22 +76,78 @@ OfflineLayer = L.TileLayer.extend({
     },
 
     cancel: function(){
-        this._hasBeenCanceled = true;
+        // no reason to cancel if it's not doing anything
+        if(this._myQueue){
+            this._hasBeenCanceled = true;
+        }
     },
 
     clearTiles: function(){
         this._tileImagesStore.clear();
     },
 
+    // calculateNbTiles includes potentially already saved tiles.
     calculateNbTiles: function(){
-        self._myQueue = null;
+        var count = 0;
+        var tileImagesToQuery = this._getTileImages();
+        for(var key in tileImagesToQuery){
+            console.log(key);
+            count++;
+        }
+        console.log(count);
+        return count;
     },
 
     isBusy: function(){
-        return !!this._myQueue;
+        return this._myQueue || this._hasBeenCanceled;
+    },
+
+    _getTileImages: function(){
+        var tileImagesToQuery = {};
+
+        var map = this._map;
+        var startingZoom = map.getZoom();
+        var maxZoom = map.getMaxZoom();
+
+        var nbZoomLevelsToCache = maxZoom - startingZoom;
+        if(nbZoomLevelsToCache > this._maxNbCachedZoomLevels){
+            alert("Not possible to save more than " + this._maxNbCachedZoomLevels + " zoom levels.")
+        }
+
+        var bounds = map.getPixelBounds();
+        var tileSize = this._getTileSize();
+
+        var tileBounds = L.bounds(
+            bounds.min.divideBy(tileSize)._floor(),
+            bounds.max.divideBy(tileSize)._floor());
+
+        var tilesInScreen = [];
+        var j, i;
+
+        for (j = tileBounds.min.y; j <= tileBounds.max.y; j++) {
+            for (i = tileBounds.min.x; i <= tileBounds.max.x; i++) {
+                tilesInScreen.push(new L.Point(i, j));
+            }
+        }
+
+        var arrayLength = tilesInScreen.length;
+        for (var i = 0; i < arrayLength; i++){
+            var point = tilesInScreen[i];
+            var x = point.x;
+            var y = point.y;
+            this._getZoomedInTiles(x, y, startingZoom, maxZoom, tileImagesToQuery);
+            this._getZoomedOutTiles(Math.floor(x/2), Math.floor(y/2), startingZoom - 1, 0, tileImagesToQuery);
+        }
+
+        return tileImagesToQuery;
     },
 
     saveTiles: function(){
+        if(this.isBusy()){
+            alert("system is busy.");
+            return;
+        }
+
         if(!this._progressControls){
             this._progressControls = new ProgressControl();
             this._progressControls.setOfflineLayer(this);
@@ -100,33 +156,10 @@ OfflineLayer = L.TileLayer.extend({
 
         this._hasBeenCanceled = false;
 
-        var startingZoom = this._getZoomForUrl();
-        var maxZoom = this._map.getMaxZoom();
-        var minZoom = 0;
-        console.log("actualZoom: " + startingZoom);
-
-        var nbZoomLevelsToCache = maxZoom - startingZoom;
-        if(nbZoomLevelsToCache > this._maxNbCachedZoomLevels){
-            alert("Not possible to save more than " + this._maxNbCachedZoomLevels + " zoom levels.")
-        }
-
-        if(this._myQueue){
-            alert("system is busy.")
-            return;
-        }
-
-        this._tileImagesToQuery = {};
-
-        for(var tile in this._tiles){
-            var split = tile.split(":");
-            var x = parseInt(split[0]);
-            var y = parseInt(split[1]);
-            this._getZoomedInTiles(x, y, startingZoom, maxZoom);
-            this._getZoomedOutTiles(Math.floor(x/2), Math.floor(y/2), startingZoom - 1, minZoom);
-        }
+        var tileImagesToQuery = this._getTileImages();
 
         var tileImagesToQueryArray = [];
-        for(var key in this._tileImagesToQuery){
+        for(var key in tileImagesToQuery){
             tileImagesToQueryArray.push(key);
         }
 
@@ -142,7 +175,7 @@ OfflineLayer = L.TileLayer.extend({
                 }
                 else{
                     var key = tileImagesToQueryArray[i];
-                    var tileInfo = self._tileImagesToQuery[key];
+                    var tileInfo = tileImagesToQuery[key];
 
                     self._nbTilesLeftToSave++;
 
@@ -173,36 +206,37 @@ OfflineLayer = L.TileLayer.extend({
             self._updateTotalNbImagesLeftToSave(self._nbTilesLeftToSave);
 
             self._myQueue.awaitAll(function(error, data) {
+                this._hasBeenCanceled = false;
                 self._myQueue = null;
             });
         }, this._onBatchQueryError, 'dense');
     },
 
-    _getZoomedInTiles: function(x, y, currentZ, maxZ){
-        this._getTileImage(x, y, currentZ);
+    _getZoomedInTiles: function(x, y, currentZ, maxZ, tileImagesToQuery){
+        this._getTileImage(x, y, currentZ, tileImagesToQuery);
 
         if(currentZ < maxZ){
             // getting the 4 tile under the current tile
-            this._getZoomedInTiles(x * 2, y * 2, currentZ + 1, maxZ);
-            this._getZoomedInTiles(x * 2 + 1, y * 2, currentZ + 1, maxZ);
-            this._getZoomedInTiles(x * 2, y * 2 + 1, currentZ + 1, maxZ);
-            this._getZoomedInTiles(x * 2 + 1, y * 2 + 1, currentZ + 1, maxZ);
+            this._getZoomedInTiles(x * 2, y * 2, currentZ + 1, maxZ, tileImagesToQuery);
+            this._getZoomedInTiles(x * 2 + 1, y * 2, currentZ + 1, maxZ, tileImagesToQuery);
+            this._getZoomedInTiles(x * 2, y * 2 + 1, currentZ + 1, maxZ, tileImagesToQuery);
+            this._getZoomedInTiles(x * 2 + 1, y * 2 + 1, currentZ + 1, maxZ, tileImagesToQuery);
         }
     },
 
-    _getZoomedOutTiles: function(x, y, currentZ, finalZ){
-        this._getTileImage(x, y, currentZ);
+    _getZoomedOutTiles: function(x, y, currentZ, finalZ, tileImagesToQuery){
+        this._getTileImage(x, y, currentZ, tileImagesToQuery);
         if(currentZ > finalZ){
-            this._getZoomedOutTiles(Math.floor(x / 2), Math.floor(y / 2), currentZ - 1, finalZ);
+            this._getZoomedOutTiles(Math.floor(x / 2), Math.floor(y / 2), currentZ - 1, finalZ, tileImagesToQuery);
         }
     },
 
-    _getTileImage: function(x, y, z){
+    _getTileImage: function(x, y, z, tileImagesToQuery){
         // At this point, we only add the image to a "dictionary"
         // This is being done to avoid multiple requests when zooming out, since zooming int should never overlap
         var key = this._createTileKey(x, y, z);
-        if(!this._tileImagesToQuery[key]){
-            this._tileImagesToQuery[key] = {key:key, x: x, y: y, z: z};
+        if(!tileImagesToQuery[key]){
+            tileImagesToQuery[key] = {key:key, x: x, y: y, z: z};
         }
     },
 
