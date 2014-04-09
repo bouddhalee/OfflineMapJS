@@ -273,8 +273,10 @@ var ProgressControl = L.Control.extend({
         this._counter = L.DomUtil.create('div', 'offlinemap-controls-counter', controls);
         this._counter.innerHTML = "0";
 
-        var cancelButton = L.DomUtil.create('img', 'offlinemap-controls-cancel-button', controls);
-        cancelButton.setAttribute('src', "cancelBtn.png");
+        var cancelButton = L.DomUtil.create('input', 'offlinemap-controls-cancel-button', controls);
+        cancelButton.setAttribute('type', "button");
+        cancelButton.setAttribute('id', "cancelBtn");
+        cancelButton.setAttribute('value', "Cancel");
 
         L.DomEvent.addListener(cancelButton, 'click', this.onCancelClick, this);
         L.DomEvent.disableClickPropagation(cancelButton);

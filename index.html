@@ -27,8 +27,10 @@
             onAdd: function (map) {
                 var controls = L.DomUtil.create('div', 'control-button', this._container);
 
-                var cacheButton = L.DomUtil.create('img', 'cache-button', controls);
-                cacheButton.setAttribute('src', "cacheBtn.png");
+                var cacheButton = L.DomUtil.create('input', 'cache-button', controls);
+                cacheButton.setAttribute('type', "button");
+                cacheButton.setAttribute('id', "Btn1");
+                cacheButton.setAttribute('value', "Cache");
 
                 L.DomEvent.addListener(cacheButton, 'click', this.onCacheClick, this);
                 L.DomEvent.disableClickPropagation(cacheButton);
