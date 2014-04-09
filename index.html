@@ -19,16 +19,41 @@
 <body>
     <div id="map"></div>
     <script>
+        var CacheBtnControl = L.Control.extend({
+            options: {
+                position: 'topright'
+            },
+
+            onAdd: function (map) {
+                var controls = L.DomUtil.create('div', 'control-button', this._container);
+
+                var cacheButton = L.DomUtil.create('img', 'cache-button', controls);
+                cacheButton.setAttribute('src', "cacheBtn.png");
+
+                L.DomEvent.addListener(cacheButton, 'click', this.onCacheClick, this);
+                L.DomEvent.disableClickPropagation(cacheButton);
+
+                return controls;
+            },
+
+            onCacheClick: function (){
+                offlineLayer.saveTiles();
+            }
+        });
+
         var aMap = L.map('map').setView([-2.9, -79], 13);
 
         var onReady = function(){
-            console.log("I am so READY!");
-            aLayer.addTo(aMap);
-            var controls = new MyControl();
-            controls.setOfflineLayer(aLayer);
-            aMap.addControl(controls);
+            console.log("The OfflineLayer is ready to be used");
+            offlineLayer.addTo(aMap);
+            var cacheBtn = new CacheBtnControl();
+            aMap.addControl(cacheBtn);
         }
-        var aLayer = new OfflineLayer(mapquestUrl, {maxZoom: 18, attribution: mapquestAttrib, subdomains: subDomains, onReady: onReady});
+        var onError = function(){
+            // do something
+        }
+        var offlineLayer = new OfflineLayer( mapquestUrl, {maxZoom: 18, attribution: mapquestAttrib, subdomains: subDomains,
+                                             onReady: onReady, /*optional*/onError: onError, /*optional*/storeName:"myStoreName"});
     </script>
 </body>
 </html>

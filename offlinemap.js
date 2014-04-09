@@ -1,75 +1,26 @@
-var maxNbCachedZoomLevels = 5;
-var cacheLoadedImages = false;
-var nbImagesLeftToSave = 0;
-var nbImagesWithError = 0;
-var hasBeenCanceled = false;
-
-// TAKEN FROM OfflineMap
-var ajax = function (src, responseType, callback, error, queueCallback) {
-    if(hasBeenCanceled){
-        queueCallback();
-        return;
-    }
-
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', src, true);
-    xhr.responseType = responseType || 'text';
-    xhr.onload = function(err) {
-        if (this.status == 200) {
-            callback(this.response);
-        }
-        else{
-            error();
-        }
-        queueCallback();
-    };
-    xhr.send();
-};
-
 OfflineLayer = L.TileLayer.extend({
-
     initialize: function (url, options) {
-        this._onReady = options["onReady"];
         L.TileLayer.prototype.initialize.call(this, url, options);
 
-        var self = this;
+        this._onReady = options["onReady"];
+        this._onError = options["onError"];
+        var storeName = options["storeName"] || 'OfflineLeafletTileImages';
 
-        this._images = new IDBStore({
+        this._hasBeenCanceled = false;
+        this._nbTilesLeftToSave = 0;
+        this._nbTilesWithError = 0;
+        this._maxNbCachedZoomLevels = 10;
+
+        this._tileImagesStore = new IDBStore({
             dbVersion: 1,
-            storeName: 'OfflineLeafletImages',
+            storeName: storeName,
             keyPath: null,
             autoIncrement: false
         }, this._onReady);
-        console.log("allo");
     },
 
-    // TAKEN FROM OfflineMap
-    _imageToDataUri: function (image) {
-        var canvas = window.document.createElement('canvas');
-        canvas.width = image.naturalWidth || image.width;
-        canvas.height = image.naturalHeight || image.height;
-
-        var context = canvas.getContext('2d');
-        context.drawImage(image, 0, 0);
-
-        return canvas.toDataURL('image/png');
-    },
-
-    // TAKEN FROM OfflineMap
-    _tileOnLoadWithCache: function () {
-        this._images.put(this._storageKey, {"image": this._layer._imageToDataUri(this)});
-        L.TileLayer.prototype._tileOnLoad.apply(this, arguments);
-    },
-
-    // TAKEN FROM OfflineMap
-    _setUpTile: function (tile, key, value, cache) {
-        if (cache) {
-            tile._storageKey = key;
-            tile.onload = this._tileOnLoadWithCache;
-            tile.crossOrigin = 'Anonymous';
-        } else {
-            tile.onload = this._tileOnLoad;
-        }
+    _setUpTile: function (tile, key, value) {
+        // Start loading the tile with either the cached tile image or the result of getTileUrl
         tile.src = value;
         this.fire('tileloadstart', {
             tile: tile,
@@ -78,40 +29,82 @@ OfflineLayer = L.TileLayer.extend({
     },
 
     _loadTile: function (tile, tilePoint) {
+        // Reproducing TileLayer._loadTile behavior, but the tile.src will be set later
         tile._layer = this;
         tile.onerror = this._tileOnError;
         this._adjustTilePoint(tilePoint);
+        tile.onload = this._tileOnLoad;
+        // Done reproducing _loadTile
 
         var self = this;
-        var onSuccess = function(item){
-            if(item){
-                console.log("found");
-                self._setUpTile(tile, key, item.image, false);
+        var onSuccess = function(dbEntry){
+            if(dbEntry){
+                self._setUpTile(tile, key, dbEntry.image);
             }
             else{
-                console.log("not found");
-                self._setUpTile(tile, key, self.getTileUrl(tilePoint), cacheLoadedImages);
+                self._setUpTile(tile, key, self.getTileUrl(tilePoint));
             }
         }
 
         var onError = function() {
-            console.log("error");
-            this._setUpTile(tile, key, this.getTileUrl(tilePoint), cacheLoadedImages);
+            // Error while getting the key from the DB
+            self._setUpTile(tile, key, this.getTileUrl(tilePoint));
+            if(self._onError){
+                self._onError();
+            }
         }
 
-        var key = tilePoint.x + ", " + tilePoint.y + ", " + tilePoint.z;
-        this._images.get(key, onSuccess, onError);
+        var key = this._createTileKey(tilePoint.x, tilePoint.y, tilePoint.z);
+        this._tileImagesStore.get(key, onSuccess, onError);
     },
 
-    saveImages: function(){
+    _updateTotalNbImagesLeftToSave: function(nbTiles){
+        this._nbTilesLeftToSave = nbTiles;
+        this._progressControls.updateTotalNbTilesLeftToSave(this._nbTilesLeftToSave);
+    },
+
+    _decrementNbTilesLeftToSave: function(){
+        this._nbTilesLeftToSave--;
+        this._progressControls.updateNbTilesLeftToSave(this._nbTilesLeftToSave);
+    },
+
+    _incrementNbTilesWithError: function(){
+        this._nbTilesWithError++;
+    },
+
+    cancel: function(){
+        this._hasBeenCanceled = true;
+    },
+
+    clearTiles: function(){
+        this._tileImagesStore.clear();
+    },
+
+    calculateNbTiles: function(){
+        self._myQueue = null;
+    },
+
+    isBusy: function(){
+        return !!this._myQueue;
+    },
+
+    saveTiles: function(){
+        if(!this._progressControls){
+            this._progressControls = new ProgressControl();
+            this._progressControls.setOfflineLayer(this);
+            this._map.addControl(this._progressControls);
+        }
+
+        this._hasBeenCanceled = false;
+
         var startingZoom = this._getZoomForUrl();
         var maxZoom = this._map.getMaxZoom();
-        var minZoom = 2;
+        var minZoom = 0;
         console.log("actualZoom: " + startingZoom);
 
         var nbZoomLevelsToCache = maxZoom - startingZoom;
-        if(nbZoomLevelsToCache > maxNbCachedZoomLevels){
-            alert("Not possible to save more than " + maxNbCachedZoomLevels + " zoom levels.")
+        if(nbZoomLevelsToCache > this._maxNbCachedZoomLevels){
+            alert("Not possible to save more than " + this._maxNbCachedZoomLevels + " zoom levels.")
         }
 
         if(this._myQueue){
@@ -119,96 +112,104 @@ OfflineLayer = L.TileLayer.extend({
             return;
         }
 
-        this._imagesToQuery = {};
+        this._tileImagesToQuery = {};
 
         for(var tile in this._tiles){
             var split = tile.split(":");
             var x = parseInt(split[0]);
             var y = parseInt(split[1]);
-            this.getZoomedInImages(x, y, startingZoom, maxZoom);
-            this.getZoomedOutImages(Math.floor(x/2), Math.floor(y/2), startingZoom - 1, minZoom);
+            this._getZoomedInTiles(x, y, startingZoom, maxZoom);
+            this._getZoomedOutTiles(Math.floor(x/2), Math.floor(y/2), startingZoom - 1, minZoom);
         }
 
-        var imagesToQueryArray = [];
-        for(var key in this._imagesToQuery){
-            imagesToQueryArray.push(key);
+        var tileImagesToQueryArray = [];
+        for(var key in this._tileImagesToQuery){
+            tileImagesToQueryArray.push(key);
         }
 
         var self = this;
-        this._images.getBatch(imagesToQueryArray, function(items){
-                self._myQueue = queue(8);
-                var i = 0;
-                items.forEach(function (item){
-                    if(item){
-                        // image already exist
-                    }
-                    else{
-                        var key = imagesToQueryArray[i];
-                        var data = self._imagesToQuery[key];
+        this._tileImagesStore.getBatch(tileImagesToQueryArray, function(items){
+            self._myQueue = queue(8);
+            var i = 0;
+            self._progressControls.evaluating();
+            self._nbTilesLeftToSave = 0;
+            items.forEach(function (item){
+                if(item){
+                    // image already exist
+                }
+                else{
+                    var key = tileImagesToQueryArray[i];
+                    var tileInfo = self._tileImagesToQuery[key];
 
-                        nbImagesLeftToSave++;
-                        //controls._counter.innerHTML = nbImagesLeftToSave;
+                    self._nbTilesLeftToSave++;
 
-                        console.log("will defer for key " + key);
-                        self._myQueue.defer(ajax, self.createURL(data.x, data.y, data.z), 'arraybuffer', function (response) {
-                                self._images.put(key, {"image": arrayBufferToBase64ImagePNG(response)});
-                                console.log("added image with key: " + key);
-                                nbImagesLeftToSave--;
-                                //controls._counter.innerHTML = nbImagesLeftToSave;
-                            },
-                            function (){
-                                nbImagesWithError++;
-                                //controls._errorCounter.innerHTML = nbImagesWithError;
-                                nbImagesLeftToSave--;
-                                //controls._counter.innerHTML = nbImagesLeftToSave;
-                            });
+                    var makingAjaxCall = function(url, callback, error, queueCallback){
+                        self._ajax(url, callback, error, queueCallback);
                     }
 
-                    i++;
-                });
+                    var gettingImage = function (response) {
+                        self._tileImagesStore.put(key, {"image": self._arrayBufferToBase64ImagePNG(response)});
+                        self._decrementNbTilesLeftToSave();
+                    }
 
-                console.log("will wait for all");
-                self._myQueue.awaitAll(function(error, data) {
-                    self._myQueue = null;
-                    console.log("done waiting");
-                    nbImagesLeftToSave = 0;
-                    //controls._counter.innerHTML = nbImagesLeftToSave;
-                });
-            }, this.onImageError, 'dense');
+                    var errorGettingImage = function (){
+                        self._incrementNbTilesWithError();
+                        self._decrementNbTilesLeftToSave();
+                        if(this._onError){
+                            this._onError();
+                        }
+                    };
+
+                    self._myQueue.defer(makingAjaxCall, self._createURL(tileInfo.x, tileInfo.y, tileInfo.z),
+                                        gettingImage, errorGettingImage);
+                }
+
+                i++;
+            });
+
+            self._updateTotalNbImagesLeftToSave(self._nbTilesLeftToSave);
+
+            self._myQueue.awaitAll(function(error, data) {
+                self._myQueue = null;
+            });
+        }, this._onBatchQueryError, 'dense');
     },
 
-    getZoomedInImages: function(x, y, currentZ, maxZ){
-        this.getImage(x, y, currentZ);
+    _getZoomedInTiles: function(x, y, currentZ, maxZ){
+        this._getTileImage(x, y, currentZ);
 
         if(currentZ < maxZ){
-            this.getZoomedInImages(x * 2, y * 2, currentZ + 1, maxZ);
-            this.getZoomedInImages(x * 2 + 1, y * 2, currentZ + 1, maxZ);
-            this.getZoomedInImages(x * 2, y * 2 + 1, currentZ + 1, maxZ);
-            this.getZoomedInImages(x * 2 + 1, y * 2 + 1, currentZ + 1, maxZ);
+            // getting the 4 tile under the current tile
+            this._getZoomedInTiles(x * 2, y * 2, currentZ + 1, maxZ);
+            this._getZoomedInTiles(x * 2 + 1, y * 2, currentZ + 1, maxZ);
+            this._getZoomedInTiles(x * 2, y * 2 + 1, currentZ + 1, maxZ);
+            this._getZoomedInTiles(x * 2 + 1, y * 2 + 1, currentZ + 1, maxZ);
         }
     },
 
-    getZoomedOutImages: function(x, y, currentZ, finalZ){
-        this.getImage(x, y, currentZ);
+    _getZoomedOutTiles: function(x, y, currentZ, finalZ){
+        this._getTileImage(x, y, currentZ);
         if(currentZ > finalZ){
-            //console.log("zoomed out image: " + x + ", " + y + ", " + currentZ)
-            this.getZoomedOutImages(Math.floor(x / 2), Math.floor(y / 2), currentZ - 1, finalZ);
+            this._getZoomedOutTiles(Math.floor(x / 2), Math.floor(y / 2), currentZ - 1, finalZ);
         }
     },
 
-    getImage: function(x, y, z){
-        var key = createKey(x, y, z);
-        if(!this._imagesToQuery[key]){
-            this._imagesToQuery[key] = {key:key, x: x, y: y, z: z};
+    _getTileImage: function(x, y, z){
+        // At this point, we only add the image to a "dictionary"
+        // This is being done to avoid multiple requests when zooming out, since zooming int should never overlap
+        var key = this._createTileKey(x, y, z);
+        if(!this._tileImagesToQuery[key]){
+            this._tileImagesToQuery[key] = {key:key, x: x, y: y, z: z};
         }
     },
 
-    onImageError: function(){
-        // What should be done?
-        console.log("Image error");
+    _onBatchQueryError: function(){
+        if(this._onError){
+            this._onError();
+        }
     },
 
-    createURL: function(x, y, z){
+    _createURL: function(x, y, z){
         var subdomainIndex = Math.abs(x + y) % this.options.subdomains.length;
         var subdomain = this.options.subdomains[subdomainIndex];
         return L.Util.template(mapquestUrl,
@@ -218,49 +219,62 @@ OfflineLayer = L.TileLayer.extend({
                 x: x,
                 y: y
             }, this.options));
+    },
+
+    // TAKEN FROM OfflineMap
+    /*
+     Probably btoa can work incorrect, you can override btoa with next example:
+     https://developer.mozilla.org/en-US/docs/Web/JavaScript/Base64_encoding_and_decoding#Solution_.232_.E2.80.93_rewriting_atob%28%29_and_btoa%28%29_using_TypedArrays_and_UTF-8
+     */
+    _arrayBufferToBase64ImagePNG: function(buffer) {
+        var binary = '';
+        var bytes = new Uint8Array(buffer);
+        for (var i = 0, l = bytes.byteLength; i < l; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return 'data:image/png;base64,' + btoa(binary);
+    },
+
+    _createTileKey: function(x, y, z){
+        return x + ", " + y + ", " + z;
+    },
+
+    // TAKEN FROM OfflineMap
+    _ajax: function(url, callback, error, queueCallback) {
+        if(this._hasBeenCanceled){
+            queueCallback();
+            return;
+        }
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.responseType = 'arraybuffer';
+        xhr.onload = function(err) {
+            if (this.status == 200) {
+                callback(this.response);
+            }
+            else{
+                error();
+            }
+            queueCallback();
+        };
+        xhr.send();
     }
 });
 
-// TAKEN FROM OfflineMap
-/*
- Probably btoa can work incorrect, you can override btoa with next example:
- https://developer.mozilla.org/en-US/docs/Web/JavaScript/Base64_encoding_and_decoding#Solution_.232_.E2.80.93_rewriting_atob%28%29_and_btoa%28%29_using_TypedArrays_and_UTF-8
- */
-function arrayBufferToBase64ImagePNG(buffer) {
-    var binary = '';
-    var bytes = new Uint8Array(buffer);
-    for (var i = 0, l = bytes.byteLength; i < l; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
-    return 'data:image/png;base64,' + btoa(binary);
-}
-
-function createKey(x, y, z){
-    return x + ", " + y + ", " + z;
-}
-
-var MyControl = L.Control.extend({
+var ProgressControl = L.Control.extend({
     options: {
         position: 'topright'
     },
 
     onAdd: function (map) {
-        var controls = L.DomUtil.create('div', 'leaflet-buttons-control-button', this._container);
+        var controls = L.DomUtil.create('div', 'offlinemap-controls', this._container);
 
-        var cacheButton = L.DomUtil.create('img', 'cache-button', controls);
-        cacheButton.setAttribute('src', "cacheBtn.png");
-
-        this._counter = L.DomUtil.create('div', 'counter', controls);
+        this._counter = L.DomUtil.create('div', 'offlinemap-controls-counter', controls);
         this._counter.innerHTML = "0";
 
-        this._errorCounter = L.DomUtil.create('div', 'error-counter', controls);
-        this._errorCounter.innerHTML = "0";
-
-        var cancelButton = L.DomUtil.create('img', 'cancel-button', controls);
+        var cancelButton = L.DomUtil.create('img', 'offlinemap-controls-cancel-button', controls);
         cancelButton.setAttribute('src', "cancelBtn.png");
-
-        L.DomEvent.addListener(cacheButton, 'click', this.onCacheClick, this);
-        L.DomEvent.disableClickPropagation(cacheButton);
 
         L.DomEvent.addListener(cancelButton, 'click', this.onCancelClick, this);
         L.DomEvent.disableClickPropagation(cancelButton);
@@ -268,13 +282,33 @@ var MyControl = L.Control.extend({
         return controls;
     },
 
-    onCacheClick: function (){
-        hasBeenCanceled = false;
-        this._offlineLayer.saveImages();
+    evaluating: function(){
+        // Tiles will get downloaded and probably cached while we are still looking at the result from the DB
+        // To avoid any weird display, we set _evaluating to false and display nothing until the total nb tiles
+        // is known.
+        this._evaluating = true;
+        this._counter.innerHTML = "...";
+    },
+
+    updateTotalNbTilesLeftToSave: function (nbTiles){
+        this._evaluating = false;
+        this._nbTilesToSave = nbTiles;
+        this.updateNbTilesLeftToSave(nbTiles);
+    },
+
+    updateNbTilesLeftToSave: function (nbTiles){
+        if(!this._evaluating){
+            if(this._nbTilesToSave == 0){
+                this._counter.innerHTML = "100%";
+            }
+            else{
+                this._counter.innerHTML = Math.floor((this._nbTilesToSave - nbTiles) / this._nbTilesToSave * 100) + "%";
+            }
+        }
     },
 
     onCancelClick: function (){
-        hasBeenCanceled = true;
+        this._offlineLayer.cancel();
     },
 
     setOfflineLayer: function (offlineLayer){
