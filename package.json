@@ -12,5 +12,8 @@
   "devDependencies": {
     "grunt": "^0.4.4"
   },
-  "dependencies": {}
+  "dependencies": {
+    "queue-async": "^1.0.7",
+    "idb-wrapper": "^1.4.1"
+  }
 }

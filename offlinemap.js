@@ -1,3 +1,6 @@
+var queue = require('queue-async');
+var IDBStore = require('idb-wrapper');
+
 OfflineLayer = L.TileLayer.extend({
     initialize: function (url, options) {
         L.TileLayer.prototype.initialize.call(this, url, options);
