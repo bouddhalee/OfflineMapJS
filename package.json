@@ -1,49 +1,16 @@
 {
-    "name": "offlineLeafletLayer",
-    "version": "3.2.26",
-    "description": "A Leaflet TileLayer with offline capabilities.",
-    "main": "index.js",
-    "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1"
-    },
-    "repository": "...",
-    "author": "Clayton Grassick",
-    "license": "GPLv3",
-    "devDependencies": {
-        /*"chai": "~1.9.0"*/
-    },
-    "dependencies": {
-        /*"underscore": "~1.5.2",
-        "grunt": "~0.4.1",
-        "grunt-contrib-handlebars": "~0.6.0",
-        "grunt-manifest": "~0.4.0",
-        "grunt-contrib-uglify": "~0.2.2",
-        "grunt-contrib-compress": "~0.5.2",
-        "grunt-shell": "~0.6.1",
-        "grunt-contrib-watch": "~0.5.3",
-        "grunt-text-replace": "~0.3.9",
-        "coffee-script": "~1.6.2",
-        "backbone-faux-server": "~0.10.1",
-        "express": "~3.4.7",
-        "glob": "~3.2.1",
-        "read": "~1.0.4",
-        "request-json": "~0.4.4",
-        "synchronize": "~0.5.2",
-        "through": "~2.3.4",
-        "parse-appcache-manifest": "~0.2.0",
-        "uglify-js": "~2.4.13",
-        "handlebars": "~1.1.2",
-        "coffeeify": "~0.6.0",
-        "grunt-contrib-copy": "~0.4.1",
-        "grunt-contrib-concat": "~0.3.0",
-        "testem": "~0.5.15",
-        "uuid": "~1.4.1",
-        "browserify": "~3.21.0",
-        "fastclick": "~0.6.11",
-        "lodash": "~2.4.1",
-        "csv": "~0.3.6",
-        "queue-async": "~1.0.7",
-        "minimongo": "~0.2.4",
-        "minimist": "0.0.8"*/
-    }
+  "name": "offlineLeafletLayer",
+  "version": "3.2.26",
+  "description": "A Leaflet TileLayer with offline capabilities.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": "...",
+  "author": "Mathieu Briau",
+  "license": "GPLv3",
+  "devDependencies": {
+    "grunt": "^0.4.4"
+  },
+  "dependencies": {}
 }
