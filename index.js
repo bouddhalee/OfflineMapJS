@@ -1394,10 +1394,8 @@ OfflineLayer = L.TileLayer.extend({
         var count = 0;
         var tileImagesToQuery = this._getTileImages();
         for(var key in tileImagesToQuery){
-            console.log(key);
             count++;
         }
-        console.log(count);
         return count;
     },
 
