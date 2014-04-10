@@ -1366,12 +1366,12 @@ OfflineLayer = L.TileLayer.extend({
 
     _updateTotalNbImagesLeftToSave: function(nbTiles){
         this._nbTilesLeftToSave = nbTiles;
-        this._progressControls.updateTotalNbTilesLeftToSave(this._nbTilesLeftToSave);
+        this.fire('tilecachingprogressstart', {nbTiles: this._nbTilesLeftToSave});
     },
 
     _decrementNbTilesLeftToSave: function(){
         this._nbTilesLeftToSave--;
-        this._progressControls.updateNbTilesLeftToSave(this._nbTilesLeftToSave);
+        this.fire('tilecachingprogress', {nbTiles:this._nbTilesLeftToSave});
     },
 
     _incrementNbTilesWithError: function(){
@@ -1451,12 +1451,6 @@ OfflineLayer = L.TileLayer.extend({
             return;
         }
 
-        if(!this._progressControls){
-            this._progressControls = new ProgressControl();
-            this._progressControls.setOfflineLayer(this);
-            this._map.addControl(this._progressControls);
-        }
-
         this._hasBeenCanceled = false;
 
         var tileImagesToQuery = this._getTileImages();
@@ -1470,7 +1464,8 @@ OfflineLayer = L.TileLayer.extend({
         this._tileImagesStore.getBatch(tileImagesToQueryArray, function(items){
             self._myQueue = queue(8);
             var i = 0;
-            self._progressControls.evaluating();
+            self.fire('tilecachingstart', null);
+
             self._nbTilesLeftToSave = 0;
             items.forEach(function (item){
                 if(item){
@@ -1511,6 +1506,7 @@ OfflineLayer = L.TileLayer.extend({
             self._myQueue.awaitAll(function(error, data) {
                 this._hasBeenCanceled = false;
                 self._myQueue = null;
+                self.fire('tilecachingprogressdone', null);
             });
         }, this._onBatchQueryError, 'dense');
     },
@@ -1602,7 +1598,7 @@ OfflineLayer = L.TileLayer.extend({
     }
 });
 
-var ProgressControl = L.Control.extend({
+OfflineProgressControl = L.Control.extend({
     options: {
         position: 'topright'
     },
@@ -1624,7 +1620,7 @@ var ProgressControl = L.Control.extend({
         return controls;
     },
 
-    evaluating: function(){
+    onProgressStart: function(){
         // Tiles will get downloaded and probably cached while we are still looking at the result from the DB
         // To avoid any weird display, we set _evaluating to false and display nothing until the total nb tiles
         // is known.
@@ -1632,19 +1628,23 @@ var ProgressControl = L.Control.extend({
         this._counter.innerHTML = "...";
     },
 
-    updateTotalNbTilesLeftToSave: function (nbTiles){
-        this._evaluating = false;
-        this._nbTilesToSave = nbTiles;
-        this.updateNbTilesLeftToSave(nbTiles);
+    onProgressDone: function(){
+
     },
 
-    updateNbTilesLeftToSave: function (nbTiles){
+    updateTotalNbTilesLeftToSave: function (event){
+        this._evaluating = false;
+        this._nbTilesToSave = event.nbTiles;
+        this.updateNbTilesLeftToSave(event.nbTiles);
+    },
+
+    updateNbTilesLeftToSave: function (event){
         if(!this._evaluating){
             if(this._nbTilesToSave == 0){
                 this._counter.innerHTML = "100%";
             }
             else{
-                this._counter.innerHTML = Math.floor((this._nbTilesToSave - nbTiles) / this._nbTilesToSave * 100) + "%";
+                this._counter.innerHTML = Math.floor((this._nbTilesToSave - event.nbTiles) / this._nbTilesToSave * 100) + "%";
             }
         }
     },
@@ -1655,6 +1655,11 @@ var ProgressControl = L.Control.extend({
 
     setOfflineLayer: function (offlineLayer){
         this._offlineLayer = offlineLayer;
+        this._offlineLayer.on('tilecachingstart', this.onProgressStart, this);
+        this._offlineLayer.on('tilecachingprogressstart', this.updateTotalNbTilesLeftToSave, this);
+        this._offlineLayer.on('tilecachingprogress', this.updateNbTilesLeftToSave, this);
+        this._offlineLayer.on('tilecachingprogressdone', this.onProgressDone, this);
+
     }
 });
 },{"idb-wrapper":1,"queue-async":2}]},{},[3])

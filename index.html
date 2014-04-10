@@ -53,6 +53,9 @@
             offlineLayer.addTo(aMap);
             var cacheBtn = new CacheBtnControl();
             aMap.addControl(cacheBtn);
+            var progressControls = new OfflineProgressControl();
+            progressControls.setOfflineLayer(offlineLayer);
+            aMap.addControl(progressControls);
         }
         var onError = function(){
             // do something
